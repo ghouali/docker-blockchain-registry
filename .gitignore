@@ -1,0 +1,16 @@
+# Env
+.env
+
+# Hardhat
+node_modules/
+artifacts/
+cache/
+coverage/
+typechain-types/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Misc
+.DS_Store
