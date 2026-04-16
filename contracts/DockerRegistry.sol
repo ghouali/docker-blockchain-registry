@@ -1,69 +1,56 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+
 /**
  * @title   DockerRegistry
- * @notice  Registre décentralisé des hashs SHA256 d'images Docker sur Ethereum.
- *          Chaque image est identifiée par son nom et son hash SHA256.
- *          Le hash est stocké on-chain de façon immuable après enregistrement.
- *          Toute tentative de falsification est détectable par comparaison de hash.
+ * @notice  Registre décentralisé des hashs SHA256 d'images Docker.
  *
- * @dev     Contrat déployé sur Ethereum Sepolia Testnet.
- *          Utilise le pattern Ownable manuel (sans OpenZeppelin) pour le contrôle d'accès.
- *          Les événements sont émis à chaque mutation d'état pour permettre
- *          l'indexation côté frontend (ethers.js queryFilter).
+ * @dev     Deux modes d'enregistrement :
+ *          1. Owner direct    — registerImage()              (accès legacy)
+ *          2. Signature ECDSA — registerImageWithSignature() (recommandé)
+ *
+ *          Mode signature : le CI signe off-chain, n'importe qui soumet on-chain.
+ *          Le contrat vérifie que le signataire est dans trustedSigners.
+ *          Cela évite d'exposer la clé privée du contrat dans les pipelines CI.
  */
 contract DockerRegistry {
+    using ECDSA            for bytes32;
+    using MessageHashUtils for bytes32;
 
     // =========================================================================
-    // STRUCTURES DE DONNÉES
+    // STRUCTURES
     // =========================================================================
 
-    /**
-     * @dev Représente une image Docker enregistrée on-chain.
-     *
-     * @param imageHash    Hash SHA256 de l'image au moment de l'enregistrement (32 bytes).
-     * @param timestamp    Horodatage Unix du bloc d'enregistrement.
-     * @param registeredBy Adresse du wallet qui a enregistré l'image.
-     * @param exists       True si l'image a été enregistrée au moins une fois.
-     * @param revoked      True si l'image a été révoquée par le propriétaire.
-     */
     struct ImageRecord {
         bytes32 imageHash;
         uint256 timestamp;
-        address registeredBy;
+        address registeredBy;   // adresse du signataire (pas forcément msg.sender)
         bool    exists;
         bool    revoked;
+        uint256 version;        // version de l'image pour éviter les replays
+        bool    signatureBased; // true si enregistré via ECDSA
     }
 
     // =========================================================================
-    // VARIABLES D'ÉTAT
+    // STATE
     // =========================================================================
 
-    /// @notice Adresse du propriétaire du contrat (seul autorisé à écrire).
     address public owner;
 
-    /**
-     * @notice Table de correspondance nom d'image → enregistrement.
-     * @dev    La clé est le nom complet de l'image, ex: "myapp:v1.2.3".
-     *         Les entrées ne sont jamais supprimées, seulement révoquées.
-     */
-    mapping(string => ImageRecord) private registry;
+    mapping(string  => ImageRecord) private registry;
+    mapping(address => bool)        public  trustedSigners;
+    mapping(bytes32 => bool)        private usedSignatures; // anti-replay
 
-    /// @notice Liste ordonnée des noms d'images enregistrées (pour itération frontend).
-    string[] private imageNames;
+    string[]  private imageNames;
+    address[] private signerList;
 
     // =========================================================================
-    // ÉVÉNEMENTS
+    // EVENTS
     // =========================================================================
 
-    /**
-     * @notice Émis lors de l'enregistrement d'une nouvelle image.
-     * @param imageName    Nom de l'image enregistrée.
-     * @param imageHash    Hash SHA256 de l'image.
-     * @param registeredBy Adresse du wallet ayant effectué l'enregistrement.
-     * @param timestamp    Horodatage du bloc.
-     */
     event ImageRegistered(
         string  indexed imageName,
         bytes32 indexed imageHash,
@@ -71,102 +58,105 @@ contract DockerRegistry {
         uint256         timestamp
     );
 
-    /**
-     * @notice Émis lors de la révocation d'une image.
-     * @param imageName  Nom de l'image révoquée.
-     * @param revokedBy  Adresse du wallet ayant effectué la révocation.
-     * @param timestamp  Horodatage du bloc.
-     */
+    event ImageRegisteredWithSignature(
+        string  indexed imageName,
+        bytes32 indexed imageHash,
+        address indexed signer,
+        uint256         version,
+        uint256         timestamp
+    );
+
     event ImageRevoked(
         string  indexed imageName,
         address indexed revokedBy,
         uint256         timestamp
     );
 
-    /**
-     * @notice Émis lors d'une vérification de hash (succès ou échec).
-     * @param imageName  Nom de l'image vérifiée.
-     * @param valid      True si le hash correspond, false sinon.
-     * @param checkedBy  Adresse du wallet ayant effectué la vérification.
-     */
     event ImageVerified(
         string  indexed imageName,
         bool            valid,
         address indexed checkedBy
     );
 
+    event SignerAdded(address indexed signer, address indexed addedBy);
+    event SignerRemoved(address indexed signer, address indexed removedBy);
+
     // =========================================================================
-    // MODIFICATEURS
+    // MODIFIERS
     // =========================================================================
 
-    /**
-     * @dev Restreint l'appel au propriétaire du contrat.
-     *
-     * Précondition  : msg.sender == owner
-     * Postcondition : l'exécution continue normalement si la condition est vraie,
-     *                 sinon la transaction est annulée (revert).
-     */
     modifier onlyOwner() {
         require(msg.sender == owner, "DockerRegistry: caller is not the owner");
         _;
     }
 
-    /**
-     * @dev Vérifie que le nom d'image fourni n'est pas vide.
-     *
-     * Précondition  : bytes(imageName).length > 0
-     * Postcondition : l'exécution continue si le nom est non vide,
-     *                 sinon la transaction est annulée.
-     */
     modifier validName(string calldata imageName) {
         require(bytes(imageName).length > 0, "DockerRegistry: image name cannot be empty");
         _;
     }
 
     // =========================================================================
-    // CONSTRUCTEUR
+    // CONSTRUCTOR
     // =========================================================================
 
-    /**
-     * @notice Initialise le contrat et assigne le déployeur comme propriétaire.
-     *
-     * Précondition  : aucune (appel unique au déploiement).
-     * Postcondition : owner == msg.sender (adresse du déployeur).
-     */
     constructor() {
         owner = msg.sender;
     }
 
     // =========================================================================
-    // FONCTIONS D'ÉCRITURE (restreintes au owner)
+    // SIGNER MANAGEMENT (owner only)
     // =========================================================================
 
     /**
-     * @notice Enregistre le hash SHA256 d'une image Docker on-chain.
-     *
-     * Préconditions :
-     *   - msg.sender == owner
-     *   - imageName != ""
-     *   - imageHash != bytes32(0)
-     *   - L'image n'existe pas déjà avec un hash actif (non révoquée)
-     *
-     * Postconditions :
-     *   - registry[imageName].imageHash == imageHash
-     *   - registry[imageName].exists == true
-     *   - registry[imageName].revoked == false
-     *   - registry[imageName].registeredBy == msg.sender
-     *   - registry[imageName].timestamp == block.timestamp
-     *   - L'événement ImageRegistered est émis
-     *
-     * @param imageName  Nom complet de l'image, ex: "myapp:v1.2.3".
-     * @param imageHash  Hash SHA256 de l'image encodé en bytes32.
+     * @notice Ajoute une adresse comme signataire de confiance.
+     * @param  signer Adresse du CI/CD ou du système off-chain autorisé.
+     */
+    function addSigner(address signer) external onlyOwner {
+        require(signer != address(0),    "DockerRegistry: zero address");
+        require(!trustedSigners[signer], "DockerRegistry: already a signer");
+        trustedSigners[signer] = true;
+        signerList.push(signer);
+        emit SignerAdded(signer, msg.sender);
+    }
+
+    /**
+     * @notice Révoque un signataire de confiance.
+     * @param  signer Adresse à retirer.
+     */
+    function removeSigner(address signer) external onlyOwner {
+        require(trustedSigners[signer], "DockerRegistry: not a signer");
+        trustedSigners[signer] = false;
+        // Retire de la liste
+        for (uint256 i = 0; i < signerList.length; i++) {
+            if (signerList[i] == signer) {
+                signerList[i] = signerList[signerList.length - 1];
+                signerList.pop();
+                break;
+            }
+        }
+        emit SignerRemoved(signer, msg.sender);
+    }
+
+    /**
+     * @notice Retourne la liste des signataires de confiance actifs.
+     */
+    function getTrustedSigners() external view returns (address[] memory) {
+        return signerList;
+    }
+
+    // =========================================================================
+    // REGISTRATION — Mode 1 : Direct (ouvert à tous)
+    // =========================================================================
+
+    /**
+     * @notice Enregistre un hash directement. Toute adresse peut enregistrer.
+     *         msg.sender devient le registrant et peut révoquer sa propre image.
      */
     function registerImage(
-        string calldata imageName,
-        bytes32         imageHash
+        string  calldata imageName,
+        bytes32          imageHash
     )
         external
-        onlyOwner
         validName(imageName)
     {
         require(imageHash != bytes32(0), "DockerRegistry: hash cannot be zero");
@@ -180,38 +170,101 @@ contract DockerRegistry {
         }
 
         registry[imageName] = ImageRecord({
-            imageHash:    imageHash,
-            timestamp:    block.timestamp,
-            registeredBy: msg.sender,
-            exists:       true,
-            revoked:      false
+            imageHash:      imageHash,
+            timestamp:      block.timestamp,
+            registeredBy:   msg.sender,
+            exists:         true,
+            revoked:        false,
+            version:        0,
+            signatureBased: false
         });
 
         emit ImageRegistered(imageName, imageHash, msg.sender, block.timestamp);
     }
 
+    // =========================================================================
+    // REGISTRATION — Mode 2 : Signature ECDSA (recommandé)
+    // =========================================================================
+
     /**
-     * @notice Révoque une image Docker enregistrée.
+     * @notice Enregistre un hash via une signature ECDSA d'un signataire de confiance.
      *
-     * Préconditions :
-     *   - msg.sender == owner
-     *   - imageName != ""
-     *   - registry[imageName].exists == true
-     *   - registry[imageName].revoked == false
+     * @dev    Le CI signe off-chain : keccak256(imageName, imageHash, version, address(this))
+     *         N'importe qui peut soumettre la transaction — seule la signature compte.
+     *         Protection anti-replay via usedSignatures.
      *
-     * Postconditions :
-     *   - registry[imageName].revoked == true
-     *   - L'événement ImageRevoked est émis
-     *
-     * @param imageName  Nom de l'image à révoquer.
+     * @param imageName  Nom de l'image Docker.
+     * @param imageHash  Hash SHA256 de l'image (bytes32).
+     * @param version    Version incrémentale (évite les replays).
+     * @param signature  Signature ECDSA 65 bytes du signataire.
+     */
+    function registerImageWithSignature(
+        string   calldata imageName,
+        bytes32           imageHash,
+        uint256           version,
+        bytes    calldata signature
+    )
+        external
+        validName(imageName)
+    {
+        require(imageHash != bytes32(0), "DockerRegistry: hash cannot be zero");
+        require(
+            !registry[imageName].exists || registry[imageName].revoked,
+            "DockerRegistry: image already registered and active"
+        );
+
+        // Reconstruit le message signé off-chain
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(imageName, imageHash, version, address(this))
+        );
+        bytes32 ethHash = msgHash.toEthSignedMessageHash();
+
+        // Anti-replay : la même signature ne peut être soumise qu'une fois
+        require(!usedSignatures[ethHash], "DockerRegistry: signature already used");
+
+        // Récupère le signataire
+        address signer = ethHash.recover(signature);
+        require(trustedSigners[signer], "DockerRegistry: signer not trusted");
+
+        // Marque la signature comme utilisée
+        usedSignatures[ethHash] = true;
+
+        if (!registry[imageName].exists) {
+            imageNames.push(imageName);
+        }
+
+        registry[imageName] = ImageRecord({
+            imageHash:      imageHash,
+            timestamp:      block.timestamp,
+            registeredBy:   signer,
+            exists:         true,
+            revoked:        false,
+            version:        version,
+            signatureBased: true
+        });
+
+        emit ImageRegisteredWithSignature(imageName, imageHash, signer, version, block.timestamp);
+    }
+
+    // =========================================================================
+    // REVOCATION (registrant ou owner)
+    // =========================================================================
+
+    /**
+     * @notice Révoque une image.
+     *         Seul le registrant de l'image ou le owner du contrat peut révoquer.
+     *         Décentralisé : chaque utilisateur contrôle ses propres images.
      */
     function revokeImage(string calldata imageName)
         external
-        onlyOwner
         validName(imageName)
     {
         require(registry[imageName].exists,   "DockerRegistry: image not found");
         require(!registry[imageName].revoked, "DockerRegistry: image already revoked");
+        require(
+            msg.sender == registry[imageName].registeredBy || msg.sender == owner,
+            "DockerRegistry: caller is not the registrant nor the owner"
+        );
 
         registry[imageName].revoked = true;
 
@@ -219,28 +272,16 @@ contract DockerRegistry {
     }
 
     // =========================================================================
-    // FONCTIONS DE LECTURE
+    // VERIFICATION
     // =========================================================================
 
     /**
-     * @notice Vérifie qu'un hash SHA256 correspond à celui enregistré on-chain.
-     *
-     * Préconditions :
-     *   - imageName != ""
-     *   - imageHash != bytes32(0)
-     *
-     * Postconditions :
-     *   - Retourne true  si : image existe, non révoquée, hash identique
-     *   - Retourne false si : image inexistante, révoquée, ou hash différent
-     *   - L'événement ImageVerified est émis avec le résultat
-     *
-     * @param imageName  Nom de l'image à vérifier.
-     * @param imageHash  Hash SHA256 recalculé localement à comparer.
-     * @return valid     True si l'image est intègre et active, false sinon.
+     * @notice Vérifie qu'un hash correspond à l'enregistrement on-chain.
+     * @return valid True si l'image est intègre et non révoquée.
      */
     function verifyImage(
-        string calldata imageName,
-        bytes32         imageHash
+        string  calldata imageName,
+        bytes32          imageHash
     )
         external
         validName(imageName)
@@ -257,20 +298,13 @@ contract DockerRegistry {
         );
 
         emit ImageVerified(imageName, valid, msg.sender);
-
         return valid;
     }
 
-    /**
-     * @notice Retourne l'enregistrement complet d'une image.
-     *
-     * Préconditions :
-     *   - imageName != ""
-     *   - registry[imageName].exists == true
-     *
-     * Postconditions :
-     *   - Retourne les 5 champs de l'ImageRecord correspondant
-     */
+    // =========================================================================
+    // GETTERS
+    // =========================================================================
+
     function getImage(string calldata imageName)
         external
         view
@@ -280,38 +314,33 @@ contract DockerRegistry {
             uint256 timestamp,
             address registeredBy,
             bool    exists,
-            bool    revoked
+            bool    revoked,
+            uint256 version,
+            bool    signatureBased
         )
     {
         require(registry[imageName].exists, "DockerRegistry: image not found");
-
-        ImageRecord storage record = registry[imageName];
-        return (
-            record.imageHash,
-            record.timestamp,
-            record.registeredBy,
-            record.exists,
-            record.revoked
-        );
+        ImageRecord storage r = registry[imageName];
+        return (r.imageHash, r.timestamp, r.registeredBy, r.exists, r.revoked, r.version, r.signatureBased);
     }
 
-    /**
-     * @notice Retourne la liste de tous les noms d'images enregistrées.
-     *
-     * Précondition  : aucune.
-     * Postcondition : retourne le tableau imageNames (peut être vide).
-     */
     function getAllImageNames() external view returns (string[] memory) {
         return imageNames;
     }
 
-    /**
-     * @notice Retourne le nombre total d'images enregistrées.
-     *
-     * Précondition  : aucune.
-     * Postcondition : retourne imageNames.length.
-     */
     function getImageCount() external view returns (uint256) {
         return imageNames.length;
+    }
+
+    /**
+     * @notice Retourne le hash du message à signer off-chain pour une image.
+     * @dev    Utile pour que le CI construise exactement le bon message.
+     */
+    function getMessageHash(
+        string  calldata imageName,
+        bytes32          imageHash,
+        uint256          version
+    ) external view returns (bytes32) {
+        return keccak256(abi.encodePacked(imageName, imageHash, version, address(this)));
     }
 }

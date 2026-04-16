@@ -1,0 +1,473 @@
+% ============================================================
+%  Docker Blockchain Registry — Présentation Beamer
+%  Étudiants : EL-GHOUALI Aymane, ALMAMOUN Ouassama, DABBEBI Mohammed
+%  Encadrant : BOITIER William
+% ============================================================
+\documentclass[aspectratio=169]{beamer}
+
+% ---------- Thème & couleurs ----------
+\usetheme{Madrid}
+\usecolortheme{default}
+\definecolor{dockerblue}{RGB}{13, 183, 237}
+\definecolor{darkbg}{RGB}{15, 23, 42}
+\definecolor{cardgray}{RGB}{30, 41, 59}
+\definecolor{emerald}{RGB}{34, 197, 94}
+\definecolor{amber}{RGB}{245, 158, 11}
+\definecolor{red}{RGB}{239, 68, 68}
+
+\setbeamercolor{structure}{fg=dockerblue}
+\setbeamercolor{frametitle}{bg=darkbg, fg=white}
+\setbeamercolor{title}{fg=white}
+\setbeamercolor{subtitle}{fg=dockerblue}
+\setbeamercolor{author}{fg=white}
+\setbeamercolor{date}{fg=dockerblue}
+\setbeamercolor{institute}{fg=white}
+\setbeamercolor{titlelike}{bg=darkbg}
+\setbeamercolor{palette primary}{bg=darkbg, fg=white}
+\setbeamercolor{palette secondary}{bg=cardgray, fg=white}
+\setbeamercolor{palette tertiary}{bg=dockerblue, fg=white}
+\setbeamercolor{block title}{bg=dockerblue, fg=white}
+\setbeamercolor{block body}{bg=cardgray!30, fg=black}
+\setbeamercolor{block title alerted}{bg=red, fg=white}
+\setbeamercolor{block body alerted}{bg=red!10, fg=black}
+\setbeamercolor{block title example}{bg=emerald!80!black, fg=white}
+\setbeamercolor{block body example}{bg=emerald!10, fg=black}
+
+% ---------- Packages ----------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage{fontawesome5}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+
+% ---------- Listings (code) ----------
+\lstdefinestyle{solidity}{
+  basicstyle=\tiny\ttfamily,
+  keywordstyle=\color{dockerblue}\bfseries,
+  commentstyle=\color{gray},
+  stringstyle=\color{emerald},
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{dockerblue},
+  backgroundcolor=\color{cardgray!15},
+  morekeywords={function,mapping,address,bytes32,uint256,string,bool,
+                event,modifier,require,emit,external,view,calldata,
+                returns,pragma,solidity,contract,struct,public,private},
+}
+
+% ---------- Infos ----------
+\title{\textbf{Docker Blockchain Registry}}
+\subtitle{Registre décentralisé d'images Docker sur Ethereum}
+\author{
+  EL-GHOUALI Aymane \and
+  ALMAMOUN Ouassama \and
+  DABBEBI Mohammed
+}
+\institute{Encadrant : \textbf{BOITIER William}}
+\date{Avril 2026}
+
+% ============================================================
+\begin{document}
+% ============================================================
+
+% ---- SLIDE 1 : TITRE ----------------------------------------
+\begin{frame}
+  \titlepage
+  \vspace{-0.5cm}
+  \begin{center}
+    \small\textcolor{dockerblue}{\faDocker\ \ Smart Contract · Ethereum Sepolia · ECDSA Attestation}
+  \end{center}
+\end{frame}
+
+% ---- SLIDE 2 : PROBLÈME ------------------------------------
+\begin{frame}{Problème : Comment faire confiance à une image Docker ?}
+
+  \begin{alertblock}{\faExclamationTriangle\ \ Risque réel dans les pipelines CI/CD}
+    Une image Docker peut être \textbf{modifiée} entre sa construction et son déploiement
+    sans que personne ne le détecte.
+  \end{alertblock}
+
+  \vspace{0.4cm}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \textbf{\textcolor{red}{Sans solution :}}
+      \begin{itemize}
+        \item[\faTimesCircle] Image falsifiée en transit
+        \item[\faTimesCircle] Registre Docker hackable
+        \item[\faTimesCircle] Aucune preuve d'intégrité
+        \item[\faTimesCircle] Déploiement de code malveillant
+        \item[\faTimesCircle] Détection impossible a posteriori
+      \end{itemize}
+
+    \column{0.48\textwidth}
+      \textbf{\textcolor{emerald}{Avec notre solution :}}
+      \begin{itemize}
+        \item[\faCheckCircle] Hash SHA256 ancré on-chain
+        \item[\faCheckCircle] Vérification instantanée
+        \item[\faCheckCircle] Falsification détectable
+        \item[\faCheckCircle] Pipeline bloqué automatiquement
+        \item[\faCheckCircle] Historique immuable
+      \end{itemize}
+  \end{columns}
+
+  \vspace{0.4cm}
+  \begin{block}{Attaque concrète}
+    \small
+    Un attaquant remplace \texttt{myapp:v1.0} dans le registre Docker par une image backdoorée.
+    Sans vérification on-chain, le déploiement passe. \textbf{Notre contrat bloque cela.}
+  \end{block}
+
+\end{frame}
+
+% ---- SLIDE 3 : CONCEPTS BLOCKCHAIN -------------------------
+\begin{frame}{Concepts Blockchain essentiels}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+
+      \begin{block}{\faLink\ \ Blockchain}
+        Registre \textbf{distribué et immuable}. Les données sont
+        répliquées sur des milliers de nœuds. Aucune entité centrale
+        ne peut les modifier ou les supprimer.
+      \end{block}
+
+      \vspace{0.3cm}
+
+      \begin{block}{\faFileCode\ \ Smart Contract}
+        Programme autonome déployé on-chain. S'exécute \textbf{exactement
+        comme codé}, sans intermédiaire. Logique et données résistent
+        à toute censure.
+      \end{block}
+
+    \column{0.48\textwidth}
+
+      \begin{block}{\faKey\ \ Cryptographie ECDSA}
+        Signature à clé publique/privée. Permet de \textbf{prouver
+        l'identité} d'un signataire sans révéler sa clé privée.
+        Standard utilisé par Ethereum pour toutes les transactions.
+      \end{block}
+
+      \vspace{0.3cm}
+
+      \begin{block}{\faHashtag\ \ Hash SHA256}
+        Empreinte unique de 256 bits d'un fichier.
+        \textbf{Toute modification} — même un seul bit — produit
+        un hash complètement différent.
+      \end{block}
+
+  \end{columns}
+
+\end{frame}
+
+% ---- SLIDE 4 : ARCHITECTURE --------------------------------
+\begin{frame}{Architecture de la solution}
+
+  \begin{center}
+  \begin{tikzpicture}[
+    box/.style={draw, rounded corners, minimum width=2.8cm, minimum height=0.9cm,
+                text centered, font=\small\bfseries},
+    arrow/.style={->, thick, color=dockerblue},
+    label/.style={font=\tiny, color=gray}
+  ]
+    % Nodes
+    \node[box, fill=cardgray!40] (ci)      at (0,0)      {CI/CD Pipeline\\(GitHub Actions)};
+    \node[box, fill=cardgray!40] (gateway) at (3.8,0)    {Gateway\\(Node.js)};
+    \node[box, fill=dockerblue!20] (contract) at (7.6,0) {Smart Contract\\(Solidity)};
+    \node[box, fill=cardgray!40] (ethereum) at (7.6,-2)  {Ethereum\\Sepolia};
+    \node[box, fill=cardgray!40] (frontend) at (3.8,-2)  {Frontend\\(React + ethers.js)};
+    \node[box, fill=cardgray!40] (user)    at (0,-2)     {Utilisateur\\(MetaMask)};
+
+    % Arrows
+    \draw[arrow] (ci)       -- node[above, label]{SHA256 + sign} (gateway);
+    \draw[arrow] (gateway)  -- node[above, label]{registerImage()} (contract);
+    \draw[arrow] (contract) -- node[right, label]{stockage} (ethereum);
+    \draw[arrow] (user)     -- node[above, label]{vérification} (frontend);
+    \draw[arrow] (frontend) -- node[above, label]{verifyImage()} (contract);
+  \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.2cm}
+  \begin{columns}[T]
+    \column{0.32\textwidth}
+      \centering\textcolor{dockerblue}{\textbf{Enregistrement}}\\
+      \small CI calcule SHA256,\\signe et soumet on-chain
+    \column{0.32\textwidth}
+      \centering\textcolor{emerald}{\textbf{Stockage}}\\
+      \small Hash immuable sur\\Ethereum Sepolia
+    \column{0.32\textwidth}
+      \centering\textcolor{amber}{\textbf{Vérification}}\\
+      \small Frontend compare\\hash local vs on-chain
+  \end{columns}
+
+\end{frame}
+
+% ---- SLIDE 5 : SMART CONTRACT ------------------------------
+\begin{frame}[fragile]{Smart Contract — DockerRegistry.sol}
+
+  \begin{columns}[T]
+    \column{0.52\textwidth}
+      \begin{lstlisting}[style=solidity]
+contract DockerRegistry {
+
+  struct ImageRecord {
+    bytes32 imageHash;
+    uint256 timestamp;
+    address registeredBy;
+    bool    exists;
+    bool    revoked;
+    uint256 version;
+    bool    signatureBased;
+  }
+
+  // N'importe qui peut enregistrer
+  function registerImage(
+    string  calldata imageName,
+    bytes32          imageHash
+  ) external { ... }
+
+  // Registrant OU owner peut révoquer
+  function revokeImage(
+    string calldata imageName
+  ) external { ... }
+
+  // Vérification publique
+  function verifyImage(
+    string  calldata imageName,
+    bytes32          imageHash
+  ) external returns (bool) { ... }
+}
+      \end{lstlisting}
+
+    \column{0.44\textwidth}
+      \textbf{Fonctions clés :}
+      \begin{itemize}
+        \item \texttt{registerImage()} — ouvert à tous
+        \item \texttt{registerImageWithSignature()} — ECDSA
+        \item \texttt{revokeImage()} — registrant ou owner
+        \item \texttt{verifyImage()} — public, gratuit
+        \item \texttt{addSigner()} — gestion CI/CD
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \textbf{Événements on-chain :}
+      \begin{itemize}
+        \item \texttt{ImageRegistered}
+        \item \texttt{ImageRevoked}
+        \item \texttt{ImageVerified}
+        \item \texttt{SignerAdded/Removed}
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \begin{exampleblock}{Déployé sur Sepolia}
+        \tiny\texttt{0xc0Bb3dD54aebD5f86EE1B8\\eCC5c5d9B30743a9c0}
+      \end{exampleblock}
+
+  \end{columns}
+
+\end{frame}
+
+% ---- SLIDE 6 : ECDSA ATTESTATION --------------------------
+\begin{frame}{Signature ECDSA — Attestation off-chain}
+
+  \begin{block}{\faShieldAlt\ \ Pourquoi la signature ECDSA ?}
+    Sans ECDSA, le CI doit avoir la \textbf{clé privée du contrat} dans ses secrets.
+    Risque maximal si compromise. Avec ECDSA, le CI signe off-chain avec \textbf{sa propre clé}.
+  \end{block}
+
+  \vspace{0.3cm}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \textbf{Flux de signature :}
+      \begin{enumerate}
+        \item CI calcule le SHA256 de l'image
+        \item CI signe : \texttt{keccak256(name, hash,}\\\texttt{version, contractAddress)}
+        \item N'importe qui soumet la signature on-chain
+        \item Le contrat \textbf{récupère l'adresse} du signataire via \texttt{ECDSA.recover()}
+        \item Vérifie que l'adresse est dans \texttt{trustedSigners}
+      \end{enumerate}
+
+    \column{0.48\textwidth}
+      \textbf{Avantages :}
+      \begin{itemize}
+        \item[\faCheckCircle] Clé du contrat jamais exposée
+        \item[\faCheckCircle] Multi-pipeline (GitHub, GitLab...)
+        \item[\faCheckCircle] Révocation d'un signer sans redéployer
+        \item[\faCheckCircle] Anti-replay : chaque signature unique
+        \item[\faCheckCircle] Standard industrie (supply-chain)
+      \end{itemize}
+
+      \vspace{0.2cm}
+      \begin{exampleblock}{Message signé}
+        \tiny\texttt{keccak256(imageName \$\vert\vert\$ imageHash \$\vert\vert\$ version \$\vert\vert\$ contractAddr)}
+      \end{exampleblock}
+  \end{columns}
+
+\end{frame}
+
+% ---- SLIDE 7 : DÉCENTRALISATION ---------------------------
+\begin{frame}{Décentralisation — Qui peut faire quoi ?}
+
+  \begin{center}
+  \renewcommand{\arraystretch}{1.4}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Action} & \textbf{Tout utilisateur} & \textbf{Registrant} & \textbf{Owner} \\
+    \midrule
+    Enregistrer une image      & \textcolor{emerald}{\faCheck} & \textcolor{emerald}{\faCheck} & \textcolor{emerald}{\faCheck} \\
+    Vérifier une image         & \textcolor{emerald}{\faCheck} & \textcolor{emerald}{\faCheck} & \textcolor{emerald}{\faCheck} \\
+    Révoquer sa propre image   & \textcolor{red}{\faTimes}     & \textcolor{emerald}{\faCheck} & \textcolor{emerald}{\faCheck} \\
+    Révoquer n'importe quelle  & \textcolor{red}{\faTimes}     & \textcolor{red}{\faTimes}     & \textcolor{emerald}{\faCheck} \\
+    Ajouter un signataire CI   & \textcolor{red}{\faTimes}     & \textcolor{red}{\faTimes}     & \textcolor{emerald}{\faCheck} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.4cm}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{exampleblock}{\faGlobe\ \ Données décentralisées}
+        Stockées sur Ethereum — aucun serveur central,
+        disponibles 24/7, impossibles à censurer ou supprimer.
+      \end{exampleblock}
+
+    \column{0.48\textwidth}
+      \begin{block}{\faUsers\ \ Accès décentralisé}
+        Tout utilisateur peut enregistrer et gérer
+        ses propres images sans permission préalable.
+      \end{block}
+  \end{columns}
+
+\end{frame}
+
+% ---- SLIDE 8 : FRONTEND & CI/CD ---------------------------
+\begin{frame}{Frontend \& Intégration CI/CD}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \textbf{\faReact\ \ Frontend React (DApp)}
+      \begin{itemize}
+        \item React 18 + Vite + Tailwind CSS
+        \item Connexion MetaMask (Sepolia)
+        \item Dashboard : stats en temps réel
+        \item Enregistrement / Vérification
+        \item Gestion des signataires ECDSA
+        \item Badges ECDSA vs Direct
+        \item Switch réseau automatique
+      \end{itemize}
+
+    \column{0.48\textwidth}
+      \textbf{\faGithub\ \ GitHub Actions}
+
+      \textbf{register.yml} — au push sur main :
+      \begin{enumerate}
+        \item Build de l'image Docker
+        \item Calcul SHA256
+        \item Appel \texttt{gateway/push.js}
+        \item Enregistrement on-chain
+      \end{enumerate}
+
+      \textbf{verify.yml} — sur Pull Request :
+      \begin{enumerate}
+        \item Rebuild de l'image
+        \item Vérification on-chain
+        \item \textcolor{red}{\textbf{Blocage}} si hash différent
+      \end{enumerate}
+  \end{columns}
+
+  \vspace{0.3cm}
+  \begin{alertblock}{\faExclamationCircle\ \ Pipeline bloqué automatiquement}
+    Si le hash de l'image ne correspond pas à l'enregistrement blockchain,
+    le déploiement est \textbf{bloqué avant} d'atteindre la production.
+  \end{alertblock}
+
+\end{frame}
+
+% ---- SLIDE 9 : TESTS & RÉSULTATS --------------------------
+\begin{frame}{Tests \& Résultats}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{exampleblock}{\faCheckDouble\ \ Suite de tests : 33/33 \faCheck}
+        \begin{itemize}
+          \item Déploiement \& initialisation
+          \item Gestion des signataires (6 tests)
+          \item \texttt{registerImage} direct (5 tests)
+          \item \texttt{registerImageWithSignature} (8 tests)
+          \item \texttt{revokeImage} (5 tests)
+          \item \texttt{verifyImage} (5 tests)
+        \end{itemize}
+      \end{exampleblock}
+
+    \column{0.48\textwidth}
+      \textbf{Cas critiques testés :}
+      \begin{itemize}
+        \item[\faShieldAlt] \textbf{Anti-replay} : signature déjà utilisée rejetée
+        \item[\faLock] \textbf{Signer révoqué} : refus immédiat
+        \item[\faExclamationTriangle] \textbf{Hash falsifié} : \texttt{verifyImage} = false
+        \item[\faUserSlash] \textbf{Tiers non autorisé} : révocation refusée
+        \item[\faSync] \textbf{Re-registration} après révocation
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \begin{block}{Stack technique}
+        Hardhat · ethers.js v6 · Chai · Mocha\\
+        OpenZeppelin ECDSA · Solidity 0.8.24
+      \end{block}
+  \end{columns}
+
+\end{frame}
+
+% ---- SLIDE 10 : CONCLUSION ---------------------------------
+\begin{frame}{Conclusion \& Perspectives}
+
+  \begin{block}{\faTrophy\ \ Ce qui a été réalisé}
+    \begin{itemize}
+      \item Smart contract décentralisé avec \textbf{ECDSA signature attestation}
+      \item Déployé sur \textbf{Ethereum Sepolia} — adresse permanente
+      \item Frontend React complet avec connexion MetaMask
+      \item Intégration CI/CD GitHub Actions (register + verify)
+      \item 33 tests unitaires — couverture complète
+    \end{itemize}
+  \end{block}
+
+  \vspace{0.3cm}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{exampleblock}{Problème résolu}
+        Toute image Docker modifiée après enregistrement
+        est \textbf{détectable instantanément} et bloque
+        automatiquement le pipeline CI/CD.
+      \end{exampleblock}
+
+    \column{0.48\textwidth}
+      \begin{block}{Perspectives}
+        \begin{itemize}
+          \item Déploiement frontend sur \textbf{IPFS}
+          \item Support \textbf{multi-chaînes} (Polygon, Arbitrum)
+          \item Intégration \textbf{Docker Hub} natif
+          \item Vérification via \textbf{Sigstore/Cosign}
+        \end{itemize}
+      \end{block}
+  \end{columns}
+
+  \vspace{0.3cm}
+  \begin{center}
+    \textcolor{dockerblue}{\large\textbf{Merci pour votre attention}}\\
+    \vspace{0.2cm}
+    \small\textcolor{gray}{Code source disponible sur GitHub · Contrat :
+    \texttt{0xc0Bb3dD54...743a9c0}}
+  \end{center}
+
+\end{frame}
+
+% ============================================================
+\end{document}
