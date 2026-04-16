@@ -1,0 +1,75 @@
+name: Verify Docker Image Integrity
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "Docker image name to verify (e.g. myorg/myapp:v1.0.0)"
+        required: true
+
+jobs:
+  verify:
+    name: Verify Image Integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          IMAGE_TAG="${{ github.repository }}:${{ github.sha }}"
+          docker build -t "$IMAGE_TAG" .
+          docker save "$IMAGE_TAG" -o image.tar
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Compute SHA256
+        run: |
+          SHA256=$(sha256sum image.tar | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_ENV
+          echo "SHA256 of image.tar: $SHA256"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify image integrity on-chain
+        id: verify
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          CONTRACT_ADDRESS: ${{ secrets.CONTRACT_ADDRESS }}
+        run: |
+          IMAGE_TAG="${{ github.repository }}:${{ github.sha }}"
+          node gateway/verify.js "$IMAGE_TAG" image.tar
+          echo "status=valid" >> $GITHUB_OUTPUT
+
+      - name: Block deployment on failure
+        if: failure() && steps.verify.outcome == 'failure'
+        run: |
+          echo "::error::Image integrity check FAILED. Deployment blocked."
+          echo "### SECURITY ALERT: Image Tampered" >> $GITHUB_STEP_SUMMARY
+          echo "The image hash does not match the on-chain record." >> $GITHUB_STEP_SUMMARY
+          echo "Deployment has been blocked automatically." >> $GITHUB_STEP_SUMMARY
+          exit 1
+
+      - name: Summary on success
+        if: success()
+        run: |
+          SHA256=$(sha256sum image.tar | awk '{print $1}')
+          echo "### Image Verified Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ github.repository }}:${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA256 | \`$SHA256\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | VALID |" >> $GITHUB_STEP_SUMMARY
