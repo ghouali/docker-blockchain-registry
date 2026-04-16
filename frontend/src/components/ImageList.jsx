@@ -87,21 +87,6 @@ function ImageRow({ image, isOwner, onRevoke }) {
           )}
           <DetailRow label="Mode" value={image.signatureBased ? "Signature ECDSA (off-chain)" : "Owner direct (on-chain)"} />
 
-          {image.revoked && (
-            <div className="flex items-center gap-2 mt-1 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-              <Trash2 className="w-3.5 h-3.5 shrink-0" />
-              <span>Image révoquée — visible publiquement sur la blockchain</span>
-              <a
-                href={`https://sepolia.etherscan.io/address/${import.meta.env.VITE_CONTRACT_ADDRESS}#events`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-auto hover:text-red-300 transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-          )}
-
           {isOwner && !image.revoked && (
             <button
               onClick={handleRevoke}
@@ -109,7 +94,7 @@ function ImageRow({ image, isOwner, onRevoke }) {
               className="mt-2 flex items-center gap-2 text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors border border-red-500/20 hover:border-red-500/40 rounded-lg px-3 py-1.5"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              {revoking ? "Révocation en cours…" : "Révoquer (owner uniquement)"}
+              {revoking ? "Révocation…" : "Révoquer cette image"}
             </button>
           )}
         </div>
