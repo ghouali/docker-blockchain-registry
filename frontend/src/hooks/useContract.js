@@ -3,13 +3,13 @@ import { ethers } from "ethers";
 import { CONTRACT_ABI } from "../utils/contractABI.js";
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS;
-const ALCHEMY_URL      = import.meta.env.VITE_ALCHEMY_URL;
-const SEPOLIA_CHAIN_ID = 11155111;
-const SEPOLIA_HEX      = "0xaa36a7";
+const RPC_URL          = import.meta.env.VITE_RPC_URL;
+const CHAIN_ID         = Number(import.meta.env.VITE_CHAIN_ID ?? 1337);
+const CHAIN_HEX        = "0x" + CHAIN_ID.toString(16);
 
 function getReadProvider() {
-  if (ALCHEMY_URL) return new ethers.JsonRpcProvider(ALCHEMY_URL);
-  return new ethers.JsonRpcProvider("https://rpc.sepolia.org");
+  if (RPC_URL) return new ethers.JsonRpcProvider(RPC_URL);
+  return new ethers.JsonRpcProvider("http://127.0.0.1:7545");
 }
 
 export function useContract() {
@@ -27,37 +27,40 @@ export function useContract() {
 
   useEffect(() => {
     try {
+      if (!CONTRACT_ADDRESS) throw new Error("VITE_CONTRACT_ADDRESS is not set");
+      if (!ethers.isAddress(CONTRACT_ADDRESS)) throw new Error("VITE_CONTRACT_ADDRESS is not a valid address");
       const ro = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, getReadProvider());
       setReadContract(ro);
     } catch (e) {
-      setError("Impossible de se connecter au contrat");
+      setError(e?.message ?? "Impossible de se connecter au contrat");
     }
   }, []);
 
   const connect = useCallback(async () => {
     if (!window.ethereum) throw new Error("MetaMask non détecté");
+    if (!CONTRACT_ADDRESS) throw new Error("VITE_CONTRACT_ADDRESS is not set");
+    if (!ethers.isAddress(CONTRACT_ADDRESS)) throw new Error("VITE_CONTRACT_ADDRESS is not a valid address");
     setConnecting(true);
     setError(null);
     try {
       await window.ethereum.request({ method: "eth_requestAccounts" });
 
       const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
-      if (parseInt(chainIdHex, 16) !== SEPOLIA_CHAIN_ID) {
+      if (parseInt(chainIdHex, 16) !== CHAIN_ID) {
         try {
           await window.ethereum.request({
             method: "wallet_switchEthereumChain",
-            params: [{ chainId: SEPOLIA_HEX }],
+            params: [{ chainId: CHAIN_HEX }],
           });
         } catch (e) {
           if (e.code === 4902) {
             await window.ethereum.request({
               method: "wallet_addEthereumChain",
               params: [{
-                chainId: SEPOLIA_HEX,
-                chainName: "Sepolia Testnet",
+                chainId: CHAIN_HEX,
+                chainName: `Ganache (${CHAIN_ID})`,
                 nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-                rpcUrls: [ALCHEMY_URL || "https://rpc.sepolia.org"],
-                blockExplorerUrls: ["https://sepolia.etherscan.io"],
+                rpcUrls: [RPC_URL || "http://127.0.0.1:7545"],
               }],
             });
           } else throw e;
@@ -67,9 +70,9 @@ export function useContract() {
 
       const web3Provider = new ethers.BrowserProvider(window.ethereum);
       const network      = await web3Provider.getNetwork();
-      const ok           = Number(network.chainId) === SEPOLIA_CHAIN_ID;
+      const ok           = Number(network.chainId) === CHAIN_ID;
       setChainOk(ok);
-      if (!ok) throw new Error("Réseau incorrect — sélectionne Sepolia");
+      if (!ok) throw new Error(`Réseau incorrect — sélectionne chainId=${CHAIN_ID}`);
 
       const s    = await web3Provider.getSigner();
       const addr = await s.getAddress();
@@ -97,9 +100,9 @@ export function useContract() {
       const names = await c.getAllImageNames();
       const records = await Promise.all(
         names.map(async (name) => {
-          const [hash, timestamp, registeredBy, exists, revoked, version, signatureBased] =
+          const [hash, timestamp, registeredBy, exists, revoked] =
             await c.getImage(name);
-          return { name, hash, timestamp: Number(timestamp), registeredBy, exists, revoked, version: Number(version), signatureBased };
+          return { name, hash, timestamp: Number(timestamp), registeredBy, exists, revoked, version: 0, signatureBased: false };
         })
       );
       setImages(records);
@@ -111,15 +114,9 @@ export function useContract() {
   }, [contract, readContract]);
 
   const fetchSigners = useCallback(async () => {
-    const c = contract || readContract;
-    if (!c) return;
-    try {
-      const list = await c.getTrustedSigners();
-      setSigners(list);
-    } catch (e) {
-      console.error("fetchSigners:", e);
-    }
-  }, [contract, readContract]);
+    // Signer management not implemented in current contract
+    setSigners([]);
+  }, []);
 
   useEffect(() => {
     if (!readContract) return;
@@ -132,18 +129,11 @@ export function useContract() {
     if (!c) return;
     const onReg    = () => { fetchImages(); fetchSigners(); };
     const onRevoke = () => fetchImages();
-    const onSigner = () => fetchSigners();
-    c.on(c.filters.ImageRegistered(),              onReg);
-    c.on(c.filters.ImageRegisteredWithSignature(), onReg);
-    c.on(c.filters.ImageRevoked(),                 onRevoke);
-    c.on(c.filters.SignerAdded(),                  onSigner);
-    c.on(c.filters.SignerRemoved(),                onSigner);
+    c.on(c.filters.ImageRegistered(), onReg);
+    c.on(c.filters.ImageRevoked(),    onRevoke);
     return () => {
-      c.off(c.filters.ImageRegistered(),              onReg);
-      c.off(c.filters.ImageRegisteredWithSignature(), onReg);
-      c.off(c.filters.ImageRevoked(),                 onRevoke);
-      c.off(c.filters.SignerAdded(),                  onSigner);
-      c.off(c.filters.SignerRemoved(),                onSigner);
+      c.off(c.filters.ImageRegistered(), onReg);
+      c.off(c.filters.ImageRevoked(),    onRevoke);
     };
   }, [contract, readContract, fetchImages, fetchSigners]);
 
@@ -167,16 +157,12 @@ export function useContract() {
   }, [contract]);
 
   const addSigner = useCallback(async (address) => {
-    if (!contract) throw new Error("Non connecté");
-    const tx = await contract.addSigner(address);
-    return tx.wait();
-  }, [contract]);
+    throw new Error("Signer management not implemented in current contract");
+  }, []);
 
   const removeSigner = useCallback(async (address) => {
-    if (!contract) throw new Error("Non connecté");
-    const tx = await contract.removeSigner(address);
-    return tx.wait();
-  }, [contract]);
+    throw new Error("Signer management not implemented in current contract");
+  }, []);
 
   const revokeImage = useCallback(async (imageName) => {
     if (!contract) throw new Error("Non connecté");
