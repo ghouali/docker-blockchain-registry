@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Package, Trash2, ChevronDown, ChevronUp, Copy, ExternalLink } from "lucide-react";
+import { Package, Trash2, ChevronDown, ChevronUp, Copy, ExternalLink, ShieldCheck, KeyRound } from "lucide-react";
 import toast from "react-hot-toast";
 import { ImageStatus } from "./ImageStatus.jsx";
 
@@ -40,6 +40,15 @@ function ImageRow({ image, isOwner, onRevoke }) {
           <span className="font-mono text-sm text-slate-200 truncate">{image.name}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          {image.signatureBased ? (
+            <span className="inline-flex items-center gap-1 bg-brand-500/10 text-brand-400 border border-brand-500/20 px-2 py-0.5 rounded-full text-xs">
+              <KeyRound className="w-3 h-3" /> ECDSA
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 bg-slate-700/50 text-slate-400 border border-slate-600 px-2 py-0.5 rounded-full text-xs">
+              <ShieldCheck className="w-3 h-3" /> Owner
+            </span>
+          )}
           <ImageStatus revoked={image.revoked} exists={image.exists} />
           {expanded ? (
             <ChevronUp className="w-4 h-4 text-slate-500" />
@@ -73,6 +82,25 @@ function ImageRow({ image, isOwner, onRevoke }) {
               timeStyle: "short",
             })}
           />
+          {image.signatureBased && (
+            <DetailRow label="Version" value={`v${image.version}`} />
+          )}
+          <DetailRow label="Mode" value={image.signatureBased ? "Signature ECDSA (off-chain)" : "Owner direct (on-chain)"} />
+
+          {image.revoked && (
+            <div className="flex items-center gap-2 mt-1 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Image révoquée — visible publiquement sur la blockchain</span>
+              <a
+                href={`https://sepolia.etherscan.io/address/${import.meta.env.VITE_CONTRACT_ADDRESS}#events`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto hover:text-red-300 transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
 
           {isOwner && !image.revoked && (
             <button
@@ -81,7 +109,7 @@ function ImageRow({ image, isOwner, onRevoke }) {
               className="mt-2 flex items-center gap-2 text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors border border-red-500/20 hover:border-red-500/40 rounded-lg px-3 py-1.5"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              {revoking ? "Révocation…" : "Révoquer cette image"}
+              {revoking ? "Révocation en cours…" : "Révoquer (owner uniquement)"}
             </button>
           )}
         </div>
